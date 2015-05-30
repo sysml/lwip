@@ -1123,6 +1123,30 @@
 #define TCP_MSS                         536
 #endif
 
+#ifndef TCP_GSO
+#define TCP_GSO 0
+#endif
+
+#ifndef TCP_GSO_MAX_SEG
+#if TCP_GSO
+#define TCP_GSO_MAX_SEG 15
+#endif
+#endif
+
+#ifndef TCP_GSO_HLEN
+#if TCP_GSO
+#define TCP_GSO_HLEN \
+				(PBUF_LINK_ENCAPSULATION_HLEN + PBUF_LINK_HLEN + \
+				 PBUF_IP_HLEN + PBUF_TRANSPORT_HLEN - ETH_PAD_SIZE)
+#endif
+#endif
+
+#ifndef TCP_GSO_SEG_LEN
+#if TCP_GSO
+#define TCP_GSO_SEG_LEN (TCP_GSO_MAX_SEG*PAGE_SIZE)
+#endif
+#endif
+
 /**
  * TCP_CALCULATE_EFF_SEND_MSS: "The maximum size of a segment that TCP really
  * sends, the 'effective send MSS,' MUST be the smaller of the send MSS (which

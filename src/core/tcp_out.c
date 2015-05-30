@@ -387,6 +387,9 @@ tcp_write(struct tcp_pcb *pcb, const void *arg, u16_t len, u8_t apiflags)
 #endif /* TCP_CHECKSUM_ON_COPY */
   err_t err;
   /* don't allocate segments bigger than half the maximum window we ever received */
+#if TCP_GSO
+  u16_t max_seglen = LWIP_MIN(pcb->cwnd, TCP_GSO_SEG_LEN) - TCP_GSO_HLEN;
+#endif
   u16_t mss_local = LWIP_MIN(pcb->mss, pcb->snd_wnd_max/2);
   mss_local = mss_local ? mss_local : pcb->mss;
 
@@ -413,7 +416,11 @@ tcp_write(struct tcp_pcb *pcb, const void *arg, u16_t len, u8_t apiflags)
     optflags = TF_SEG_OPTS_TS;
     optlen = LWIP_TCP_OPT_LENGTH(TF_SEG_OPTS_TS);
     /* ensure that segments can hold at least one data byte... */
+#ifndef TCP_GSO
     mss_local = LWIP_MAX(mss_local, LWIP_TCP_OPT_LEN_TS + 1);
+#else
+    max_seglen = LWIP_MAX(max_seglen, LWIP_TCP_OPT_LEN_TS + 1);
+#endif
   }
 #endif /* LWIP_TCP_TIMESTAMPS */
 
@@ -451,9 +458,13 @@ tcp_write(struct tcp_pcb *pcb, const void *arg, u16_t len, u8_t apiflags)
 
     /* Usable space at the end of the last unsent segment */
     unsent_optlen = LWIP_TCP_OPT_LENGTH(last_unsent->flags);
-    LWIP_ASSERT("mss_local is too small", mss_local >= last_unsent->len + unsent_optlen);
+#if TCP_GSO
+    LWIP_ASSERT("max_seglen is too small", max_seglen >= last_unsent->len + unsent_optlen);
+    space = max_seglen - (last_unsent->len + unsent_optlen);
+#else
+    LWIP_ASSERT("max_seglen is too small", mss_local >= last_unsent->len + unsent_optlen);
     space = mss_local - (last_unsent->len + unsent_optlen);
-
+#endif
     /*
      * Phase 1: Copy data directly into an oversized pbuf.
      *
@@ -545,12 +556,20 @@ tcp_write(struct tcp_pcb *pcb, const void *arg, u16_t len, u8_t apiflags)
   while (pos < len) {
     struct pbuf *p;
     u16_t left = len - pos;
+#if TCP_GSO
+    u16_t max_len = max_seglen - optlen;
+#else
     u16_t max_len = mss_local - optlen;
+#endif
     u16_t seglen = left > max_len ? max_len : left;
 #if TCP_CHECKSUM_ON_COPY
     u16_t chksum = 0;
     u8_t chksum_swapped = 0;
 #endif /* TCP_CHECKSUM_ON_COPY */
+
+		LWIP_DEBUGF(TCP_OUTPUT_DEBUG | LWIP_DBG_TRACE,
+								("tcp_write: seglen %"U16_F" max_len %"U16_F" left %"U16_F"\n",
+								 seglen, max_len, left));
 
     if (apiflags & TCP_WRITE_FLAG_COPY) {
       /* If copy is set, memory should be allocated and data copied
