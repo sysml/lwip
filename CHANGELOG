@@ -6,6 +6,19 @@ HISTORY
 
   ++ New features:
 
+  2015-08-30: Simon Goldschmidt
+  * PBUF_REF with "custom" pbufs is now supported for RX pbufs (see pcapif in
+    contrib for an example, LWIP_SUPPORT_CUSTOM_PBUF is required)
+
+  2015-08-30: Simon Goldschmidt
+  * support IPv4 source based routing: define LWIP_HOOK_IP4_ROUTE_SRC to point
+    to a routing function
+
+
+  2015-08-05: Simon Goldschmidt
+  * many files: allow multicast socket options IP_MULTICAST_TTL, IP_MULTICAST_IF
+    and IP_MULTICAST_LOOP to be used without IGMP
+
   2015-04-24: Simon Goldschmidt
   * dhcp.h/c, autoip.h/.c: added functions dhcp/autoip_supplied_address() to
     check for the source of address assignemnt (replacement for NETIF_FLAG_DHCP)
