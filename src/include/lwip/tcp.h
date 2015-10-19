@@ -297,6 +297,10 @@ struct tcp_pcb {
   /* KEEPALIVE counter */
   u8_t keep_cnt_sent;
 
+#if LWIP_CHECKSUM_PARTIAL
+  u16_t cspartial_init;
+#endif
+
 #if LWIP_WND_SCALE
   u8_t snd_scale;
   u8_t rcv_scale;

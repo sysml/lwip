@@ -582,6 +582,10 @@ tcp_listen_input(struct tcp_pcb_listen *pcb)
 #if LWIP_CALLBACK_API
     npcb->accept = pcb->accept;
 #endif /* LWIP_CALLBACK_API */
+#if TCP_CHECKSUM_PARTIAL
+    npcb->cspartial_init = ip_chksum_partial_init(IP_PROTO_TCP,
+                             &npcb->local_ip, &npcb->remote_ip);
+#endif
     /* inherit socket options */
     npcb->so_options = pcb->so_options & SOF_INHERITED;
     /* Register the new PCB so that we can begin receiving segments

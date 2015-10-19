@@ -2531,6 +2531,14 @@
 #define LWIP_CHECKSUM_ON_COPY           0
 #endif
 
+/**
+ * LWIP_CHECKSUM_PARTIAL==1: Calculate only a partial checksum (pseudo-header)
+ * for IP TCP/UDP traffic. Rest of calculation should be offloaded.
+ */
+#ifndef LWIP_CHECKSUM_PARTIAL
+#define LWIP_CHECKSUM_PARTIAL           0
+#endif
+
 /*
    ---------------------------------------
    ---------- IPv6 options ---------------

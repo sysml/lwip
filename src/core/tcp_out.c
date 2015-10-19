@@ -950,8 +950,12 @@ tcp_send_empty_ack(struct tcp_pcb *pcb)
 #endif 
 
 #if CHECKSUM_GEN_TCP
+#if TCP_CHECKSUM_PARTIAL
+  tcphdr->chksum = ip_chksum_partial_calc(pcb->cspartial_init, p->tot_len);
+#else
   tcphdr->chksum = ip_chksum_pseudo(p, IP_PROTO_TCP, p->tot_len,
     &pcb->local_ip, &pcb->remote_ip);
+#endif
 #endif
 #if LWIP_NETIF_HWADDRHINT
   err = ip_output_hinted(PCB_ISIPV6(pcb), p, &pcb->local_ip, &pcb->remote_ip, pcb->ttl, pcb->tos,
@@ -1268,8 +1272,12 @@ tcp_output_segment(struct tcp_seg *seg, struct tcp_pcb *pcb)
   }
 #else /* TCP_CHECKSUM_ON_COPY */
 #if CHECKSUM_GEN_TCP
+#if TCP_CHECKSUM_PARTIAL
+  seg->tcphdr->chksum = ip_chksum_partial_calc(pcb->cspartial_init, seg->p->tot_len);
+#else
   seg->tcphdr->chksum = ip_chksum_pseudo(seg->p, IP_PROTO_TCP,
     seg->p->tot_len, &pcb->local_ip, &pcb->remote_ip);
+#endif
 #endif /* CHECKSUM_GEN_TCP */
 #endif /* TCP_CHECKSUM_ON_COPY */
   TCP_STATS_INC(tcp.xmit);
@@ -1508,8 +1516,12 @@ tcp_keepalive(struct tcp_pcb *pcb)
 #if CHECKSUM_GEN_TCP
   tcphdr = (struct tcp_hdr *)p->payload;
 
+#if TCP_CHECKSUM_PARTIAL
+  tcphdr->chksum = ip_chksum_partial_calc(pcb->cspartial_init, p->tot_len);
+#else
   tcphdr->chksum = ip_chksum_pseudo(p, IP_PROTO_TCP, p->tot_len,
       &pcb->local_ip, &pcb->remote_ip);
+#endif
 #endif /* CHECKSUM_GEN_TCP */
   TCP_STATS_INC(tcp.xmit);
 
@@ -1591,8 +1603,12 @@ tcp_zero_window_probe(struct tcp_pcb *pcb)
   }
 
 #if CHECKSUM_GEN_TCP
+#if TCP_CHECKSUM_PARTIAL
+  tcphdr->chksum = ip_chksum_partial_calc(pcb->cspartial_init, p->tot_len);
+#else
   tcphdr->chksum = ip_chksum_pseudo(p, IP_PROTO_TCP, p->tot_len,
       &pcb->local_ip, &pcb->remote_ip);
+#endif
 #endif
   TCP_STATS_INC(tcp.xmit);
 

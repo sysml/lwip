@@ -279,6 +279,10 @@ PACK_STRUCT_END
 
 /** Don't generate checksum on copy if CHECKSUM_GEN_TCP is disabled */
 #define TCP_CHECKSUM_ON_COPY  (LWIP_CHECKSUM_ON_COPY && CHECKSUM_GEN_TCP)
+#define TCP_CHECKSUM_PARTIAL  (LWIP_CHECKSUM_PARTIAL && CHECKSUM_GEN_TCP)
+#if TCP_CHECKSUM_ON_COPY && TCP_CHECKSUM_PARTIAL
+#error "LWIP_CHECKSUM_PARTIAL cannot be used with LWIP_CHECKSUM_ON_COPY"
+#endif
 
 /* This structure represents a TCP segment on the unsent, unacked and ooseq queues */
 struct tcp_seg {

@@ -611,3 +611,140 @@ lwip_chksum_copy(void *dst, const void *src, u16_t len)
   return LWIP_CHKSUM(dst, len);
 }
 #endif /* (LWIP_CHKSUM_COPY_ALGORITHM == 1) */
+
+#if LWIP_CHECKSUM_PARTIAL
+#if LWIP_IPV4
+/* inet_chksum_partial_init
+ *
+ * Initializes the static part of an partial IPv4 Internet checksum used
+ * by TCP and UDP for a pbuf chain (used for checksum offloading).
+ *
+ * @param proto ip protocol (used for checksum of pseudo header)
+ * @param src source ip address (used for checksum of pseudo header)
+ * @param dest destination ip address (used for checksum of pseudo header)
+ * @return initialized partial checksum (to be completed with ip_chksum_partial_calc)
+ */
+static inline u16_t
+inet_chksum_partial_init(u8_t proto, const ip4_addr_t *src, const ip4_addr_t *dest)
+{
+  u32_t acc;
+  u32_t addr;
+
+  addr = ip4_addr_get_u32(src);
+  acc = (addr & 0xffffUL);
+  acc += ((addr >> 16) & 0xffffUL);
+  addr = ip4_addr_get_u32(dest);
+  acc += (addr & 0xffffUL);
+  acc += ((addr >> 16) & 0xffffUL);
+  acc += ((u16_t)htons((u16_t)proto & 0x00ff));
+
+  /* Fold 32-bit sum to 16 bits
+     calling this twice is probably faster than if statements... */
+  acc = FOLD_U32T(acc);
+  acc = FOLD_U32T(acc);
+  LWIP_DEBUGF(INET_DEBUG, ("inet_chksum_partial_init(): pbuf chain lwip_chksum()=%"X32_F"\n", acc));
+  return (acc & 0xffffUL);
+}
+#endif /* LWIP_IPV4 */
+
+#if LWIP_IPV6
+/* ip6_chksum_partial_init
+ *
+ * Initializes the static part of an partial IPv6 Internet checksum used
+ * by TCP and UDP for a pbuf chain (used for checksum offloading).
+ *
+ * @param proto ip protocol (used for checksum of pseudo header)
+ * @param src source ip address (used for checksum of pseudo header)
+ * @param dest destination ip address (used for checksum of pseudo header)
+ * @return initialized partial checksum (to be completed with ip_chksum_partial_calc)
+ */
+static inline u16_t
+ip6_chksum_partial_init(u8_t proto, const ip6_addr_t *src, const ip6_addr_t *dest)
+{
+  u32_t acc;
+  u32_t addr;
+
+  for (addr_part = 0; addr_part < 4; addr_part++) {
+    addr = src->addr[addr_part];
+    acc += (addr & 0xffffUL);
+    acc += ((addr >> 16) & 0xffffUL);
+    addr = dest->addr[addr_part];
+    acc += (addr & 0xffffUL);
+    acc += ((addr >> 16) & 0xffffUL);
+  }
+  acc += ((u16_t)htons((u16_t)proto & 0x00ff));
+
+  /* Fold 32-bit sum to 16 bits
+     calling this twice is probably faster than if statements... */
+  acc = FOLD_U32T(acc);
+  acc = FOLD_U32T(acc);
+  LWIP_DEBUGF(INET_DEBUG, ("inet_chksum_partial_init(): pbuf chain lwip_chksum()=%"X32_F"\n", acc));
+  return (acc & 0xffffUL);
+}
+#endif /* LWIP_IPV6 */
+
+/* ip_chksum_partial_init
+ *
+ * Initializes the static part of an partial IPv4/IPv6 Internet checksum used
+ * by TCP and UDP for a pbuf chain (used for checksum offloading).
+ *
+ * @param proto ip protocol (used for checksum of pseudo header)
+ * @param src source ip address (used for checksum of pseudo header)
+ * @param dest destination ip address (used for checksum of pseudo header)
+ * @return initialized partial checksum (to be completed with ip_chksum_partial_calc)
+ */
+u16_t
+ip_chksum_partial_init(u8_t proto, const ip_addr_t *src, const ip_addr_t *dest)
+{
+#if LWIP_IPV6
+  if (IP_IS_V6(dest)) {
+    return ip6_chksum_partial_init(proto, ip_2_ip6(src), ip_2_ip6(dest));
+  }
+#endif /* LWIP_IPV6 */
+#if LWIP_IPV4 && LWIP_IPV6
+  else
+#endif /* LWIP_IPV4 && LWIP_IPV6 */
+#if LWIP_IPV4
+  {
+    return inet_chksum_partial_init(proto, ip_2_ip4(src), ip_2_ip4(dest));
+  }
+#endif /* LWIP_IPV4 */
+}
+
+/* ip_chksum_partial_calc
+ *
+ * Completes the static part of an partial IPv4/IPv6 Internet checksum used
+ * by TCP and UDP for a pbuf chain (used for checksum offloading).
+ *
+ * @param init Initialized checksum (via ip_checksum_partial_init())
+ * @param proto_len length of the ip data part (used for checksum of pseudo header)
+ * @return partial checksum
+ */
+u16_t
+ip_chksum_partial_calc(u16_t init, u16_t proto_len)
+{
+  u32_t acc = init;
+
+  acc += ((u16_t)htons(proto_len));
+  acc = FOLD_U32T(acc);
+  acc = FOLD_U32T(acc);
+  LWIP_DEBUGF(INET_DEBUG, ("inet_chksum_partial(): pbuf chain lwip_chksum()=%"X32_F"\n", acc));
+  return (acc & 0xffffUL);
+}
+
+/* ip_chksum_partial
+ *
+ * Calculates the static part of an partial IPv4/IPv6 Internet checksum used
+ * by TCP and UDP for a pbuf chain (used for checksum offloading).
+ *
+ * @param proto ip protocol (used for checksum of pseudo header)
+ * @param src source ip address (used for checksum of pseudo header)
+ * @param dest destination ip address (used for checksum of pseudo header)
+ * @param proto_len length of the ip data part (used for checksum of pseudo header)
+ * @return partial checksum
+ */
+u16_t ip_chksum_partial(u8_t proto, const ip_addr_t *src, const ip_addr_t *dest, u16_t proto_len)
+{
+  return ip_chksum_partial_calc(ip_chksum_partial_init(proto, src, dest), proto_len);
+}
+#endif /* LWIP_CHECKSUM_PARTIAL */
