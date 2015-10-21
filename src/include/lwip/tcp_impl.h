@@ -283,6 +283,9 @@ PACK_STRUCT_END
 #if TCP_CHECKSUM_ON_COPY && TCP_CHECKSUM_PARTIAL
 #error "LWIP_CHECKSUM_PARTIAL cannot be used with LWIP_CHECKSUM_ON_COPY"
 #endif
+#if TCP_GSO && !TCP_CHECKSUM_PARTIAL
+#error "TCP_GSO requires TCP_CHECKSUM_PARTIAL enabled"
+#endif
 
 /* This structure represents a TCP segment on the unsent, unacked and ooseq queues */
 struct tcp_seg {
