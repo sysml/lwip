@@ -1012,12 +1012,16 @@ tcp_seg_split(struct tcp_pcb *pcb, struct tcp_seg *seg, u16_t pos, u16_t *pbuf_a
   o = NULL;
   p = seg->p;
   tot_len_front = 0;
-  while ((p != NULL) && ((u16_t)(tot_len_front + p->len) < ppos)) {
+  while ((p->next != NULL) &&
+	 ((u16_t)(tot_len_front + p->len) < ppos)) {
     tot_len_front += p->len;
     o = p; /* p->prev */
     p = p->next;
   }
   ppos_in_p = ppos - tot_len_front;
+  LWIP_ASSERT("could not find segment to split", (p != NULL));
+
+  LWIP_DEBUGF(TCP_OUTPUT_DEBUG | 2, ("p->len: %"PRIu16", p->tot_len: %"PRIu16", len_in_front: %"PRIu16", ppos_in_p: %"PRIu16", ppos: %"PRIu16"\n", p->len, p->tot_len, tot_len_front, ppos_in_p, ppos));
 
   /* Phase 2: Allocate required pbufs and seg */
   *pbuf_alen = 0;
