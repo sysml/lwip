@@ -156,6 +156,34 @@ static const char *memp_desc[MEMP_MAX] = {
 #endif /* LWIP_DEBUG */
 
 #if MEMP_SEPARATE_POOLS
+#if MEMP_POOLS_ON_HEAP
+#if !MEM_LIBC_MALLOC
+#error "MEMP_POOLS_ON_HEAP requires MEM_LIBC_MALLOC"
+#endif
+
+/** This keeps a reference to the later allocated pools */
+#define LWIP_MEMPOOL(name,num,size,desc) u8_t *memp_memory_ ## name ## _base;
+#include "lwip/memp_std.h"
+
+/** This array holds the base of each memory pool. */
+static u8_t *memp_bases[] = {
+#define LWIP_MEMPOOL(name,num,size,desc) NULL,
+#include "lwip/memp_std.h"
+};
+
+/* This function is called when lwIP is initialized. All pools are allocated here */
+static inline void
+memp_allocate_pools(void)
+{
+  unsigned i = 0;
+
+#define LWIP_MEMPOOL(name,num,size,desc) memp_bases[i++] = memp_memory_ ## name ## _base = \
+  mem_malloc(((num) * (MEMP_SIZE + MEMP_ALIGN_SIZE(size)))); \
+  LWIP_ASSERT("could not allocate pool "desc, (memp_bases[i-1] != NULL));
+#include "lwip/memp_std.h"
+}
+
+#else /* MEMP_POOLS_ON_HEAP */
 
 /** This creates each memory pool. These are named memp_memory_XXX_base (where
  * XXX is the name of the pool defined in memp_std.h).
@@ -172,6 +200,7 @@ static u8_t *const memp_bases[] = {
 #include "lwip/memp_std.h"
 };
 
+#endif /* MEMP_POOLS_ON_HEAP */
 #else /* MEMP_SEPARATE_POOLS */
 
 /** This is the actual memory used by the pools (all pools in one big block). */
@@ -359,6 +388,10 @@ memp_init(void)
 {
   struct memp *memp;
   u16_t i, j;
+
+#if MEMP_SEPARATE_POOLS && MEMP_POOLS_ON_HEAP
+  memp_allocate_pools();
+#endif
 
   for (i = 0; i < MEMP_MAX; ++i) {
     MEMP_STATS_AVAIL(used, i, 0);

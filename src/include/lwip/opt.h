@@ -152,6 +152,15 @@
 #endif
 
 /**
+ * MEMP_POOLS_ON_HEAP: if MEMP_SEPARATE_POOLS is enabled all pools can
+ * even be allocated on the system's heap instead of being placed in the
+ * application binary.
+ */
+#ifndef MEMP_POOLS_ON_HEAP
+#define MEMP_POOLS_ON_HEAP              0
+#endif
+
+/**
  * MEMP_OVERFLOW_CHECK: memp overflow protection reserves a configurable
  * amount of bytes before and after each memp element in every pool and fills
  * it with a prominent default value.
