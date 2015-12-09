@@ -85,6 +85,10 @@ typedef enum {
 #define PBUF_FLAG_LLMCAST   0x10U
 /** indicates this pbuf includes a TCP FIN flag */
 #define PBUF_FLAG_TCP_FIN   0x20U
+#if TCP_GSO
+/** indicates this pbuf should be segmented before sending */
+#define PBUF_FLAG_GSO       0x40U
+#endif
 
 struct pbuf {
   /** next pbuf in singly linked pbuf chain */
@@ -110,6 +114,11 @@ struct pbuf {
 
   /** misc flags */
   u8_t flags;
+
+#if TCP_GSO
+  /** sizes for segments when PBUF_FLAG_GSO is set (only set on head pbuf) */
+  u16_t gso_size;
+#endif
 
   /**
    * the reference count always equals the number of pointers

@@ -1438,6 +1438,12 @@ tcp_output_segment(struct tcp_seg *seg, struct tcp_pcb *pcb)
 #endif
 #endif /* CHECKSUM_GEN_TCP */
 #endif /* TCP_CHECKSUM_ON_COPY */
+#if TCP_GSO
+  if (seg->len > pcb->mss) {
+    seg->p->flags |= PBUF_FLAG_GSO;
+    seg->p->gso_size = pcb->mss;
+  }
+#endif
   TCP_STATS_INC(tcp.xmit);
 
 #if LWIP_NETIF_HWADDRHINT
