@@ -1047,7 +1047,9 @@ tcp_seg_split(struct tcp_pcb *pcb, struct tcp_seg *seg, u16_t pos, u16_t *pbuf_a
   seg2->len = seg2_len = seg->len - pos;
   seg->len  = seg_len  = pos;
   if (ppos_in_p == 0) {
+    u16_t tmp;
     /* fast case: splitting is happening on pbuf edge */
+    o = pbuf_skip(seg->p, ppos - 1, &tmp); /* pick previous pbuf (we checked already that ppos is > 0) */
     LWIP_ASSERT("check that pbuf does have a precessor", (o != NULL));
     o->next = NULL;
     seg2->p = p;
@@ -1612,7 +1614,7 @@ tcp_rexmit(struct tcp_pcb *pcb)
     pcb->snd_queuelen += nb_new_pbufs;
 
     LWIP_DEBUGF(TCP_DEBUG, ("lazy segment splitting: [1] seqno: %"PRIu32", len: %"PRIu16"; [2] seqno: %"PRIu32", len: %"PRIu16"\n",
-              ntohl(seg->tcphdr->seqno), TCP_TCPLEN(seg), ntohl(seg->next->tcphdr->seqno), TCP_TCPLEN(seg->next));
+                ntohl(seg->tcphdr->seqno), TCP_TCPLEN(seg), ntohl(seg->next->tcphdr->seqno), TCP_TCPLEN(seg->next)));
 
     tcp_seg_free(seg);
     seg = nseg;
