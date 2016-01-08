@@ -978,6 +978,51 @@ tcp_send_empty_ack(struct tcp_pcb *pcb)
 }
 
 #if TCP_GSO
+/** Partially acknowledges a TCP segment by dropping leading bytes from the payload
+ *  (lazy software segmentation on TCP retransmission)
+ *
+ * Called by tcp_rexmit(). Note, checksums are not recalculated
+ * because this function is only enabled when segmentation offloading is enabled
+ * which requires partial checksumming to be enabled.
+ *
+ * @param pcb tcp_pcb where seg belongs to
+ * @param seg segment where bytes shall be acknowledged
+ * @param pos position in segment payload for dropping
+ * @param pbuf_releases is incremented by the number of free'd pbufs
+ */
+static void
+tcp_seg_ack_partial(struct tcp_pcb *pcb, struct tcp_seg *seg, u16_t pos, u16_t *pbuf_releases)
+{
+  struct pbuf *q;
+  u16_t pld_off;
+  u16_t releases = 0;
+
+  LWIP_ERROR("(pcb != NULL) && (seg != NULL) && (pos < seg->len) (programmer violates API)",
+             ((pcb != NULL) && (seg != NULL) && (pos < seg->len)), return;);
+
+  LWIP_DEBUGF(TCP_OUTPUT_DEBUG | 2, ("tcp_seg_ack_partial: drop bytes until %"PRIu16" (seg->len: %"PRIu16", seg->p->tot_len: %"PRIu16", hdr_len: %"PRIu16")\n", pos, seg->len, seg->p->tot_len, seg->p->tot_len - seg->len));
+  LWIP_ASSERT("segment without TCP header!?", (seg->tcphdr != NULL && seg->len < seg->p->tot_len));
+
+  /* Phase 0: Fast case, no dropping required */
+  if (pos == 0)
+    return;
+
+  /* Phase 1: Caclulate drop range */
+  pld_off  = seg->p->tot_len - seg->len;
+
+  /* Phase 2: Drop bytes from pbuf */
+  q = pbuf_drop_at(seg->p, pld_off, pos, &releases);
+  LWIP_ASSERT("failed to drop bytes from pbuf", (q != NULL));
+  LWIP_ASSERT("dropped/modified segment header!?", (q == seg->p));
+
+  /* Phase 3: Update segment descriptor */
+  seg->len -= pos;
+  seg->tcphdr->seqno = htonl(ntohl(seg->tcphdr->seqno) + pos);
+
+  if (pbuf_releases)
+    *pbuf_releases += releases;
+}
+
 /** Splits a TCP segment into two segments (software segmentation)
  *
  * Called by tcp_output(). Note, checksums are not recalculated
@@ -992,7 +1037,7 @@ tcp_send_empty_ack(struct tcp_pcb *pcb)
  * @return ERR_OK if segment got split
  *         another err_t on error
  */
-err_t
+static err_t
 tcp_seg_split(struct tcp_pcb *pcb, struct tcp_seg *seg, u16_t pos, u16_t *pbuf_allocs)
 {
   struct tcp_seg *seg2 = NULL;
@@ -1004,8 +1049,14 @@ tcp_seg_split(struct tcp_pcb *pcb, struct tcp_seg *seg, u16_t pos, u16_t *pbuf_a
   int prepend_hdr;
   unsigned allocs;
 
-  LWIP_ASSERT("pos is out of segment range", (pos < seg->len));
-  LWIP_DEBUGF(TCP_OUTPUT_DEBUG | 2, ("tcp_seg_split: split segment at %"PRIu16" (seg->len: %"PRIu16", seg->p->tot_len: %"PRIu16")\n", pos, seg->len, seg->p->tot_len));
+  LWIP_ERROR("(pcb != NULL) && (seg != NULL) && (pos < seg->len) (programmer violates API)",
+             ((pcb != NULL) && (seg != NULL) && (pos < seg->len)), return ERR_ARG;);
+
+  LWIP_DEBUGF(TCP_OUTPUT_DEBUG | 2, ("tcp_seg_split: split segment at %"PRIu16" (seg->len: %"PRIu16", seg->p->tot_len: %"PRIu16", hdr_len: %"PRIu16")\n", pos, seg->len, seg->p->tot_len, seg->p->tot_len - seg->len));
+  LWIP_ASSERT("segment without TCP header!?", (seg->tcphdr != NULL && seg->len < seg->p->tot_len));
+  for (o = seg->p; o != NULL; o = o->next) {
+    LWIP_ASSERT("splitting pbuf chains with multiple references are not implemented yet", (o->ref <= 1));
+  }
 
   /* Phase 0: Fast case, no splitting required */
   if (pos == 0)
@@ -1597,30 +1648,14 @@ tcp_rexmit(struct tcp_pcb *pcb)
   ASSERT(TCP_SEQ_GEQ(pcb->lastack, ntohl(seg->tcphdr->seqno)));
   acked_from_seg = pcb->lastack - ntohl(seg->tcphdr->seqno);
   if (acked_from_seg > 0) {
-    struct tcp_seg *nseg;
-    u16_t nb_new_pbufs = 0;
-    err_t err;
+    u16_t released_pbufs = 0;
 
     LWIP_DEBUGF(TCP_DEBUG, ("acked_from_seg: %"PRIu32" / seqno %"PRIu32", seglen %"PRIu16"\n",
                 acked_from_seg, ntohl(seg->tcphdr->seqno), TCP_TCPLEN(seg)));
 
-    /* Dirty lazy segment splitting with memory allocation (dangerous!) and fixing of queuelen...
-     * FIXME/TODO: Introduce a tcp_seg_drop_head() function that does dropping without memory allocations that get free'd anyway */
-    err = tcp_seg_split(pcb, seg, (u16_t) acked_from_seg, &nb_new_pbufs);
-    LWIP_ASSERT("lazy segment splitting failed (PLEASE IMPLEMENT HEAD DROP)", (err == ERR_OK));
-
-    nseg = pcb->unacked = seg->next;
-    pcb->snd_queuelen -= pbuf_clen(seg->p);
-    pcb->snd_queuelen += nb_new_pbufs;
-
-    LWIP_DEBUGF(TCP_DEBUG, ("lazy segment splitting: [1] seqno: %"PRIu32", len: %"PRIu16"; [2] seqno: %"PRIu32", len: %"PRIu16"\n",
-                ntohl(seg->tcphdr->seqno), TCP_TCPLEN(seg), ntohl(seg->next->tcphdr->seqno), TCP_TCPLEN(seg->next)));
-
-    tcp_seg_free(seg);
-    seg = nseg;
-
-    /* issue with the snd buffer? does it need to e incresed,
-     * do we need to call sent? */
+    /* Lazy segment splitting by dropping payload head */
+    tcp_seg_ack_partial(pcb, seg, (u16_t) acked_from_seg, &released_pbufs);
+    pcb->snd_queuelen -= released_pbufs;
   }
 #endif
 

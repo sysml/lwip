@@ -193,6 +193,7 @@ struct pbuf *pbuf_dechain(struct pbuf *p);
 err_t pbuf_copy(struct pbuf *p_to, struct pbuf *p_from);
 u16_t pbuf_copy_partial(struct pbuf *p, void *dataptr, u16_t len, u16_t offset);
 struct pbuf *pbuf_skip(struct pbuf* in, u16_t in_offset, u16_t* out_offset);
+struct pbuf *pbuf_skip2(struct pbuf* in, u16_t in_offset, u16_t* out_offset, struct pbuf** out_prev);
 static inline void *pbuf_skip_ptr(struct pbuf *in, u16_t in_offset)
 {
   struct pbuf *out;
@@ -202,6 +203,9 @@ static inline void *pbuf_skip_ptr(struct pbuf *in, u16_t in_offset)
     return NULL;
   return (void *)((uintptr_t) out->payload + out_offset);
 }
+#ifdef TCP_GSO
+struct pbuf* pbuf_drop_at(struct pbuf* in, u16_t in_offset, u16_t in_len, u16_t *out_releases);
+#endif
 err_t pbuf_take(struct pbuf *buf, const void *dataptr, u16_t len);
 err_t pbuf_take_at(struct pbuf *buf, const void *dataptr, u16_t len, u16_t offset);
 struct pbuf *pbuf_coalesce(struct pbuf *p, pbuf_layer layer);

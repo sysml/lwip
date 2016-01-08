@@ -1065,6 +1065,148 @@ pbuf_skip(struct pbuf* in, u16_t in_offset, u16_t* out_offset)
 }
 
 /**
+ * Skip a number of bytes at the start of a pbuf
+ *
+ * @param in input pbuf
+ * @param in_offset offset to skip
+ * @param out_offset resulting offset in the returned pbuf
+ * @param out_prev prepending pbuf of the returned pbuf
+ * @return the pbuf in the queue where the offset is
+ */
+struct pbuf*
+pbuf_skip2(struct pbuf* in, u16_t in_offset, u16_t* out_offset, struct pbuf** out_prev)
+{
+  u16_t offset_left = in_offset;
+  struct pbuf* q = in;
+  struct pbuf* prev = NULL;
+
+  /* get the correct pbuf */
+  while ((q != NULL) && (q->len <= offset_left)) {
+    offset_left -= q->len;
+    prev = q;
+    q = q->next;
+  }
+  if (out_offset != NULL) {
+    *out_offset = offset_left;
+  }
+  if (out_prev != NULL) {
+    *out_prev = prev;
+  }
+  return q;
+}
+
+#if TCP_GSO
+/**
+ * Drop a number of bytes from a pbuf
+ * TODO: This implementation does not support pbuf chains with multiple references yet.
+ * NOTE: This function is called by tcp_seg_ack_partial() and expects the operation to be
+ *       finished without failure (e.g., no memory allocation because they could fail)
+ *
+ * @param in input pbuf
+ * @param in_offset offset to start dropping
+ * @param in_len number of bytes to be dropped
+ * @param out_releases resulting offset in the returned pbuf
+ * @return the new head of the pbuf chain
+ */
+struct pbuf*
+pbuf_drop_at(struct pbuf* in, u16_t in_offset, u16_t in_len, u16_t *out_releases)
+{
+  struct pbuf* s;
+  struct pbuf* e;
+  u16_t s_offset;
+  u16_t e_offset;
+  struct pbuf* p;
+  struct pbuf* q;
+  u16_t releases = 0;
+
+  LWIP_ERROR("(in != NULL) && (in_offset + in_len < in->tot_len) (programmer violates API)",
+             ((in != NULL) && (in_offset + in_len < in->tot_len)), return NULL;);
+
+  for (q = in; q != NULL; q = q->next)
+    LWIP_ASSERT("pbuf_drop_at: pbuf chains with multiple references are not implemented yet", (q->ref <= 1));
+
+  s = pbuf_skip2(in, in_offset, &s_offset, &q);
+  if (s_offset == 0 && q != NULL) {
+    s = q;
+    s_offset = s->len;
+  }
+  LWIP_ASSERT("", (s != NULL)); /* something serios is wrong when this happens */
+
+  e = pbuf_skip(in, in_offset + in_len, &e_offset);
+
+  if (in_offset == 0 && in_offset + in_len == in->tot_len) {
+    /* fast case: release whole chain */
+    if (out_releases)
+      *out_releases = pbuf_clen(in);
+    pbuf_free(in);
+    return NULL;
+  }
+  if (s == e) {
+    /* Special case: we have to drop bytes within a single pbuf.
+     * we do this by moving bytes of the header to the new payload start
+     * unfortunately this will require some CPU cycles... */
+    u16_t i;
+
+    if (s->type != PBUF_RAM && s->type != PBUF_POOL) {
+      LWIP_ASSERT("dropping bytes within a single rom/ref pbuf is not implemented yet (impossible without allocations)", (1 == 0));
+      return NULL;
+    }
+
+    /* move bytes up */
+    for (i = s_offset; i > 0; --i) {
+      *((u8_t*)((uintptr_t) s->payload + e_offset - i)) =
+         *((u8_t*)((uintptr_t) s->payload + s_offset - i));
+    }
+    s->payload  = (void *)((uintptr_t) s->payload + in_len);
+    s->len     -= in_len;
+    s->tot_len -= in_len;
+  } else {
+    /* drop bytes on leading pbuf (only if it will not be released) */
+    if (in_offset != 0 && s_offset < s->len) {
+      s->len = s_offset;
+    }
+
+    /* drop bytes on trailing pbuf */
+    if (e != NULL && e_offset > 0) {
+      e->payload  = (void *)((uintptr_t) e->payload + e_offset);
+      e->len     -= e_offset;
+      e->tot_len -= e_offset;
+    }
+
+    /* drop pbufs in between */
+    if (s_offset == 0) {
+      s = e;
+      q = in;
+    } else {
+      q = s->next;
+    }
+    while (q != e) {
+      p = q->next;
+      q->next = NULL;
+      pbuf_free(q);
+      q = p;
+      releases++;
+    }
+    if (in_offset == 0) {
+      in = e;
+    }
+  }
+
+  /* fix tot_len of prepending pbufs in the chain */
+  if (s != e) {
+    s->next = e;
+    s->tot_len -= in_len;
+  }
+  for (q = in; q != s; q = q->next)
+    q->tot_len -= in_len;
+
+  if (out_releases)
+    *out_releases = releases;
+  return in;
+}
+#endif /* TCP_GSO */
+
+/**
  * Copy application supplied data into a pbuf.
  * This function can only be used to copy the equivalent of buf->tot_len data.
  *
