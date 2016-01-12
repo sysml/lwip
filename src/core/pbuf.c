@@ -989,6 +989,53 @@ pbuf_copy_partial(struct pbuf *buf, void *dataptr, u16_t len, u16_t offset)
   return copied_total;
 }
 
+/**
+ * Memcopies (part of) the contents of a packet buffer
+ * to another packet buffer.
+ *
+ * @param p_to the pbuf to which to copy data
+ * @param p_from the pbuf from which to copy data
+ * @param to_offset copy offset in the target pbuf
+ * @param from_offset copy offset in the source pbuf
+ * @param len length of data to copy
+ */
+void
+pbuf_memcpy(struct pbuf *p_to, struct pbuf *p_from, u16_t to_offset, u16_t from_offset, u16_t len)
+{
+  struct pbuf *q_to, *q_from;
+  u16_t q_to_off, q_from_off;
+  u16_t cpylen;
+
+  LWIP_ERROR("(p_to != NULL) && (p_from != NULL) && ((to_offset + len) < p_to->tot_len) && ((from_offset + len) < p_from->tot_len) (programmer violates API)",
+             ((p_to != NULL) && (p_from != NULL) && ((to_offset + len) < p_to->tot_len) && ((from_offset + len) < p_from->tot_len)), return;);
+
+  q_to   = pbuf_skip(p_to,   to_offset,   &q_to_off);
+  LWIP_ASSERT("q_to != NULL",   q_to != NULL);
+  q_from = pbuf_skip(p_from, from_offset, &q_from_off);
+  LWIP_ASSERT("q_from != NULL", q_from != NULL);
+
+  while (len) {
+    cpylen = LWIP_MIN(len, LWIP_MIN(q_to->len - q_to_off, q_from->len - q_from_off));
+
+    MEMCPY((void *)((uintptr_t) q_to->payload + q_to_off),
+           (void *)((uintptr_t) q_from->payload + q_from_off),
+           cpylen);
+
+    q_to_off   += cpylen;
+    q_from_off += cpylen;
+    len -= cpylen;
+
+    if (q_to_off == q_to->len) {
+      q_to = q_to->next;
+      q_to_off = 0;
+    }
+    if (q_from_off == q_from->len) {
+      q_from = q_from->next;
+      q_from_off = 0;
+    }
+  }
+}
+
 #if LWIP_TCP && TCP_QUEUE_OOSEQ && LWIP_WND_SCALE
 /**
  * This method modifies a 'pbuf chain', so that its total length is
@@ -1123,14 +1170,14 @@ pbuf_drop_at(struct pbuf* in, u16_t in_offset, u16_t in_len, u16_t *out_releases
              ((in != NULL) && (in_offset + in_len < in->tot_len)), return NULL;);
 
   for (q = in; q != NULL; q = q->next)
-    LWIP_ASSERT("pbuf_drop_at: pbuf chains with multiple references are not implemented yet", (q->ref <= 1));
+    LWIP_ASSERT("pbuf chains with multiple references are not implemented yet", (q->ref <= 1));
 
   s = pbuf_skip2(in, in_offset, &s_offset, &q);
   if (s_offset == 0 && q != NULL) {
     s = q;
     s_offset = s->len;
   }
-  LWIP_ASSERT("", (s != NULL)); /* something serios is wrong when this happens */
+  LWIP_ASSERT("s != NULL", (s != NULL)); /* something serios is wrong when this happens */
 
   e = pbuf_skip(in, in_offset + in_len, &e_offset);
 
@@ -1203,6 +1250,145 @@ pbuf_drop_at(struct pbuf* in, u16_t in_offset, u16_t in_len, u16_t *out_releases
   if (out_releases)
     *out_releases = releases;
   return in;
+}
+
+/**
+ * This method splits a 'pbuf chain' into two parts.
+ * The remainder of the original pbuf chain is stored
+ * in *rest.
+ * TODO: This implementation does not support pbuf chains with multiple references yet.
+ *
+ * @param in the pbuf queue to be split
+ * @param in_pos byte position in payload where chain should to be split
+ * @param out_rest pointer to store the remainder chain
+ * @param out_allocations number of allocations needed for this procedure
+ */
+err_t
+pbuf_split_at(struct pbuf* in, u16_t in_pos, pbuf_layer in_rest_layer, struct pbuf** out_rest, u16_t *out_allocations)
+{
+  struct pbuf *q, *q2, *q2_hdr = NULL;
+  struct pbuf *p, *r;
+  u16_t q_pos;
+  u16_t allocations = 0;
+
+  LWIP_ERROR("(in != NULL) && (in_pos < in->tot_len) && (out_rest != NULL) (programmer violates API)",
+             ((in != NULL) && (in_pos < in->tot_len) && (out_rest != NULL)), return ERR_ARG;);
+
+  for (q = in; q != NULL; q = q->next)
+    LWIP_ASSERT("pbuf chains with multiple references are not implemented yet", (q->ref <= 1));
+
+  if (in_pos == 0 || in_pos >= (in->tot_len)) {
+    /* fast case: we have nothing to do */
+    *out_rest = NULL;
+    if (out_allocations)
+      *out_allocations = 0;
+    return ERR_OK;
+  }
+
+  /* let q point to the pbuf where the in_pos is, p points to q's previous pbuf */
+  q = pbuf_skip2(in, in_pos, &q_pos, &p);
+  LWIP_ASSERT("q != NULL", (q != NULL)); /* something serios is wrong when this happens */
+  LWIP_ASSERT("q_pos != 0 || p != NULL", (q_pos != 0 || p != NULL)); /* something serios is wrong when this happens */
+
+  if (q_pos == 0) {
+    /*
+     * split on edge
+     */
+    if (in_rest_layer != PBUF_RAW) {
+      q2_hdr = pbuf_alloc(in_rest_layer, 0, PBUF_RAM);
+      if (!q2_hdr) {
+        return ERR_MEM;
+      }
+      ++allocations;
+    }
+
+    p->next = NULL;
+
+    /* fix pbuf chains */
+    for (r = in; r != NULL; r = r->next)
+      r->tot_len -= q->tot_len;
+
+    /* prepend header space */
+    if (q2_hdr) {
+      pbuf_cat(q2_hdr, q);
+      *out_rest = q2_hdr;
+    } else {
+      *out_rest = q;
+    }
+  } else {
+    /*
+     * split pbuf
+     */
+    /* allocate required pbufs */
+    switch(q->type) {
+    case PBUF_ROM:
+    case PBUF_REF:
+      if (in_rest_layer != PBUF_RAW) {
+        q2_hdr = pbuf_alloc(in_rest_layer, 0, PBUF_RAM);
+        if (!q2_hdr)
+          return ERR_MEM;
+        ++allocations;
+      }
+      q2 = pbuf_alloc(PBUF_RAW, q->len - q_pos, q->type);
+      if (q2 == NULL) {
+        if (q2_hdr)
+          pbuf_free(q2_hdr);
+        return ERR_MEM;
+      }
+      ++allocations;
+      break;
+    case PBUF_RAM:
+    case PBUF_POOL:
+      q2 = pbuf_alloc(in_rest_layer, q->len - q_pos, q->type);
+      if (q2 == NULL)
+        return ERR_MEM;
+      ++allocations;
+      break;
+    default:
+      LWIP_ASSERT("unsupported pbuf type", (1 == 0));
+    }
+    q2->flags = q->flags;
+    q2->ref   = q->ref;
+
+    /* move payload */
+    q2->len = q->len - q_pos;
+    q2->tot_len = q2->len;
+    switch(q->type) {
+    case PBUF_ROM:
+    case PBUF_REF:
+      q2->payload = (u8_t *)((uintptr_t) q->payload + q_pos);
+      break;
+    case PBUF_RAM:
+    case PBUF_POOL:
+      MEMCPY(q2->payload, (u8_t *)((uintptr_t) q->payload + q_pos), q2->len);
+      break;
+    default:
+      LWIP_ASSERT("unsupported pbuf type", (1 == 0));
+    }
+    q->len = q_pos;
+
+    /* relink chain */
+    q2->next = q->next;
+    q->next = NULL;
+
+    /* fix pbuf chains */
+    if (q2->next)
+      q2->tot_len += q2->next->tot_len;
+    for (r = in; r != NULL; r = r->next)
+      r->tot_len -= q2->tot_len;
+
+    /* prepend header space */
+    if (q2_hdr) {
+      pbuf_cat(q2_hdr, q2);
+      *out_rest = q2_hdr;
+    } else {
+      *out_rest = q2;
+    }
+  }
+
+  if (out_allocations)
+    *out_allocations = allocations;
+  return ERR_OK;
 }
 #endif /* TCP_GSO */
 

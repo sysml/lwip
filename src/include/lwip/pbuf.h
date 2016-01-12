@@ -192,6 +192,7 @@ void pbuf_chain(struct pbuf *head, struct pbuf *tail);
 struct pbuf *pbuf_dechain(struct pbuf *p);
 err_t pbuf_copy(struct pbuf *p_to, struct pbuf *p_from);
 u16_t pbuf_copy_partial(struct pbuf *p, void *dataptr, u16_t len, u16_t offset);
+void pbuf_memcpy(struct pbuf *p_to, struct pbuf *p_from, u16_t to_offset, u16_t from_offset, u16_t len);
 struct pbuf *pbuf_skip(struct pbuf* in, u16_t in_offset, u16_t* out_offset);
 struct pbuf *pbuf_skip2(struct pbuf* in, u16_t in_offset, u16_t* out_offset, struct pbuf** out_prev);
 static inline void *pbuf_skip_ptr(struct pbuf *in, u16_t in_offset)
@@ -205,6 +206,7 @@ static inline void *pbuf_skip_ptr(struct pbuf *in, u16_t in_offset)
 }
 #ifdef TCP_GSO
 struct pbuf* pbuf_drop_at(struct pbuf* in, u16_t in_offset, u16_t in_len, u16_t *out_releases);
+err_t pbuf_split_at(struct pbuf* in, u16_t in_pos, pbuf_layer in_rest_layer, struct pbuf** out_rest, u16_t *out_allocations);
 #endif
 err_t pbuf_take(struct pbuf *buf, const void *dataptr, u16_t len);
 err_t pbuf_take_at(struct pbuf *buf, const void *dataptr, u16_t len, u16_t offset);

@@ -1032,146 +1032,86 @@ tcp_seg_ack_partial(struct tcp_pcb *pcb, struct tcp_seg *seg, u16_t pos, u16_t *
  * @param pcb tcp_pcb where seg belongs to
  * @param seg segment to split
  * @param pos position in segment for splitting
- * @param pbuf_allocs incremented by the number of additional allocated pbufs (can be set to NULL)
- *
- * @return ERR_OK if segment got split
- *         another err_t on error
+ * @param allocs returns the number of additional allocated pbufs for the chains
+ * @return ERR_OK if segment got split, another err_t on error
  */
 static err_t
-tcp_seg_split(struct tcp_pcb *pcb, struct tcp_seg *seg, u16_t pos, u16_t *pbuf_allocs)
+tcp_seg_split(struct tcp_pcb *pcb, struct tcp_seg *seg, u16_t pos, u16_t *allocs)
 {
   struct tcp_seg *seg2 = NULL;
-  struct pbuf *p2 = NULL, *phd = NULL;
-  struct pbuf *o, *p, *q;
-  u16_t ppos, ppos_in_p;
-  u16_t seg_len, seg2_len;
-  u16_t tcp_hdr_offset, tcp_hdr_len, payload_offset;
-  int prepend_hdr;
-  unsigned allocs;
+  struct pbuf *p, *p2;
+  u16_t hdr_len;
+  u16_t thdr_len, thdr_off;
+  err_t err;
+  u16_t a = 0;
 
   LWIP_ERROR("(pcb != NULL) && (seg != NULL) && (pos < seg->len) (programmer violates API)",
              ((pcb != NULL) && (seg != NULL) && (pos < seg->len)), return ERR_ARG;);
 
   LWIP_DEBUGF(TCP_OUTPUT_DEBUG | 2, ("tcp_seg_split: split segment at %"PRIu16" (seg->len: %"PRIu16", seg->p->tot_len: %"PRIu16", hdr_len: %"PRIu16")\n", pos, seg->len, seg->p->tot_len, seg->p->tot_len - seg->len));
   LWIP_ASSERT("segment without TCP header!?", (seg->tcphdr != NULL && seg->len < seg->p->tot_len));
-  for (o = seg->p; o != NULL; o = o->next) {
-    LWIP_ASSERT("splitting pbuf chains with multiple references are not implemented yet", (o->ref <= 1));
-  }
 
   /* Phase 0: Fast case, no splitting required */
-  if (pos == 0)
+  if (pos == 0 || pos >= seg->len)
     return ERR_OK; /* nothing to do */
 
-  /* Phase 1: Find pbuf to split in segment's pbuf chain */
-  payload_offset = seg->p->tot_len - seg->len;
-  tcp_hdr_len    = (TCP_HLEN + LWIP_TCP_OPT_LENGTH(seg->flags));
-  tcp_hdr_offset = payload_offset - tcp_hdr_len;
-  ppos = payload_offset + pos; /* pos in payload */
-  p = pbuf_skip(seg->p, ppos, &ppos_in_p);
-  LWIP_ASSERT("could not find split position in pbuf", (p != NULL));
-  LWIP_DEBUGF(TCP_OUTPUT_DEBUG | 2, ("p->len: %"PRIu16", p->tot_len: %"PRIu16", ppos_in_p: %"PRIu16", ppos: %"PRIu16"\n", p->len, p->tot_len, ppos_in_p, ppos));
+  /* Phase 1: Find split position chain */
+  hdr_len  = seg->p->tot_len - seg->len;
+  thdr_len = (TCP_HLEN + LWIP_TCP_OPT_LENGTH(seg->flags));
+  thdr_off = hdr_len - thdr_len;
 
-  /* Phase 2: Allocate required pbufs and seg */
-  allocs = 0;
-  prepend_hdr = 0;
-  if (ppos_in_p != 0) {
-    /* slow case: we actually have to split a pbuf */
-    p2 = pbuf_alloc(PBUF_TRANSPORT, p->len - ppos_in_p, p->type); /* if PBUF_RAM, it includes extra space for headers */
-    if (!p2)
-      goto errmem;
-    ++allocs;
-    prepend_hdr = (p->type == PBUF_RAM || p->type == PBUF_POOL);
-  }
-  if (!prepend_hdr) {
-    /* we allocate another buffer for the TCP header because
-     * it is not guarenteed that we can prepend it */
-    phd = pbuf_alloc(PBUF_IP, payload_offset, PBUF_RAM); /* TODO: remove */
-    if (!phd)
-      goto errmem;
-    ++allocs;
-  }
+  /* Phase 2: allocate new segment */
   seg2 = (struct tcp_seg *) memp_malloc(MEMP_TCP_SEG);
-  if (!seg2)
-    goto errmem;
-
-  /* Phase 3: Split pbufs and segs */
-  seg2->len = seg2_len = seg->len - pos;
-  seg->len  = seg_len  = pos;
-  if (ppos_in_p == 0) {
-    u16_t tmp;
-    /* fast case: splitting is happening on pbuf edge */
-    o = pbuf_skip(seg->p, ppos - 1, &tmp); /* pick previous pbuf (we checked already that ppos is > 0) */
-    LWIP_ASSERT("check that pbuf does have a precessor", (o != NULL));
-    o->next = NULL;
-    seg2->p = p;
-  } else {
-    /* split payload */
-    p2->len = p->len - ppos_in_p;
-    if (p->type == PBUF_ROM || p->type == PBUF_REF) {
-      p2->payload = (u8_t *)((uintptr_t) p->payload + ppos_in_p);
-    } else {
-      MEMCPY(p2->payload, (u8_t *)((uintptr_t) p->payload + ppos_in_p), p2->len);
-    }
-    p2->flags   = p->flags;
-    p2->ref     = p->ref; /* FIXME? */
-    p2->next    = p->next;
-    p2->tot_len = p2->next ? p2->next->tot_len + p2->len : p2->len;
-    p->len      = ppos_in_p;
-    p->next     = NULL;
-    seg2->p     = p2;
+  if (!seg2) {
+    err = ERR_MEM;
+    LWIP_DEBUGF(TCP_OUTPUT_DEBUG | 2, ("tcp_seg_split: Failed to allocate a new segment descriptor: %d\n", err));
+    goto err_out;
   }
 
-  /* recalculate tot_len of first pbuf chain */
-  for (q = seg->p;  q != NULL; q = q->next)
-    q->tot_len -= seg2_len;
+  /* Phase 3: split pbuf */
+  p = seg->p;
+  err = pbuf_split_at(seg->p, hdr_len + pos, PBUF_TRANSPORT, &p2, &a);
+  if ((err != ERR_OK) || (p2 == NULL)) {
+    LWIP_DEBUGF(TCP_OUTPUT_DEBUG | 2, ("tcp_seg_split: Failed to split pbuf: %d, %p\n", err, p2));
+    goto err_free_seg2;
+  }
 
-  /* copy segmentation settings */
+  /* Phase 4: copy header from p to p2 */
+  err = pbuf_header(p2, hdr_len); /* this fails only when hdr_len is bigger than provided via PBUF_TRANSPORT
+                                   * -> this should be never the case, otherwise something strange is going on */
+  LWIP_ASSERT("err == ERR_OK", err == ERR_OK);
+  pbuf_memcpy(p2, p, 0, 0, hdr_len);
+
+  /* Phase 5: update segments */
+  seg2->p      = p2;
+  seg2->tcphdr = pbuf_skip_ptr(seg2->p, thdr_off); /* never fails */
+  LWIP_ASSERT("seg2->tcphdr != NULL", (seg2->tcphdr != NULL));
+
+  seg2->len    = seg->len - pos;
+  seg->len    -= seg2->len;
+  seg2->flags  = seg->flags;
+
+  seg2->next   = seg->next;
+  seg->next    = seg2;
+
 #if TCP_OVERSIZE_DBGCHECK
   /* FIXME/TODO: Check and fixme? */
   seg2->oversize_left = seg->oversize_left;
   seg->oversize_left  = 0;
 #endif /* TCP_OVERSIZE_DBGCHECK */
-  seg2->flags = seg->flags;
 
-  /* copy headers */
-  if (prepend_hdr) {
-    /* header is copied in front of existing pbuf */
-    pbuf_header(seg2->p, payload_offset); /* does not fail, we checked during allocation time */
-    LWIP_ASSERT("cannot prepend header to second segment", (seg2->p->len >= payload_offset));
-    MEMCPY(seg2->p->payload, seg->p->payload, payload_offset);
-  } else {
-    /* header is copied to new pbuf (phd) which gets prepended */
-    LWIP_ASSERT("cannot prepend header to second segment", (phd->len == payload_offset));
-    MEMCPY(phd->payload, seg->p->payload, payload_offset);
-    phd->flags = seg2->p->flags;
-    pbuf_cat(phd, seg2->p);
-    seg2->p = phd;
-  }
-  seg2->tcphdr = pbuf_skip_ptr(seg2->p, tcp_hdr_offset); /* never fails */
-  LWIP_ASSERT("segment 2 is broken", (seg2->tcphdr != NULL));
-
-  /* correct seqno */
   seg2->tcphdr->seqno = htonl(ntohl(seg->tcphdr->seqno) + seg->len);
 
-  /* re-link segments */
-  seg2->next = seg->next;
-  seg->next  = seg2;
+  if (allocs)
+    *(allocs) = a;
 
-  if (pbuf_allocs)
-    *(pbuf_allocs) += allocs;
-
-  LWIP_DEBUGF(TCP_OUTPUT_DEBUG | 2, ("tcp_seg_split: seg0->len: %"PRIu16", seg0->p->tot_len: %"PRIu16", seg1->len: %"PRIu16", seg1->p->tot_len: %"PRIu16"\n", seg->len, seg->p->tot_len, seg2->len, seg2->p->tot_len));
-
+  LWIP_DEBUGF(TCP_OUTPUT_DEBUG | 2, ("tcp_seg_split: seg1->len: %"PRIu16", seg1->p->tot_len: %"PRIu16", seg2->len: %"PRIu16", seg2->p->tot_len: %"PRIu16"\n", seg->len, seg->p->tot_len, seg2->len, seg2->p->tot_len));
   return ERR_OK;
 
- errmem:
-  if (p2)
-    pbuf_free(p2);
-  if (phd)
-    pbuf_free(phd);
-
-  LWIP_DEBUGF(TCP_OUTPUT_DEBUG | 2, ("tcp_seg_split: spliting failed: out of memory\n"));
-  return ERR_MEM;
+ err_free_seg2:
+  memp_free(MEMP_TCP_SEG, seg2);
+ err_out:
+  return err;
 }
 #endif /* TCP_GSO */
 
