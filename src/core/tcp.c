@@ -768,10 +768,6 @@ tcp_connect(struct tcp_pcb *pcb, const ip_addr_t *ipaddr, u16_t port,
     return ERR_VAL;
   }
   pcb->remote_port = port;
-#if TCP_CHECKSUM_PARTIAL
-  pcb->cspartial_init = ip_chksum_partial_init(IP_PROTO_TCP,
-                         &pcb->local_ip, &pcb->remote_ip);
-#endif
 
   /* check if we have a route to the remote host */
   if (ip_addr_isany(&pcb->local_ip)) {
@@ -795,6 +791,12 @@ tcp_connect(struct tcp_pcb *pcb, const ip_addr_t *ipaddr, u16_t port,
       return ERR_BUF;
     }
   }
+
+#if TCP_CHECKSUM_PARTIAL
+ pcb->cspartial_init = ip_chksum_partial_init(IP_PROTO_TCP,
+                         &pcb->local_ip, &pcb->remote_ip);
+#endif
+
 #if SO_REUSE
   if (ip_get_option(pcb, SOF_REUSEADDR)) {
     /* Since SOF_REUSEADDR allows reusing a local address, we have to make sure
