@@ -213,6 +213,9 @@ tcp_create_segment(struct tcp_pcb *pcb, struct pbuf *p, u8_t flags, u32_t seqno,
   TCPH_HDRLEN_FLAGS_SET(seg->tcphdr, (5 + optlen / 4), flags);
   /* wnd and chksum are set in tcp_output */
   seg->tcphdr->urgp = 0;
+#if TCP_GSO
+  seg->p->gso_size = pcb->mss;
+#endif
   return seg;
 } 
 
@@ -1477,9 +1480,11 @@ tcp_output_segment(struct tcp_seg *seg, struct tcp_pcb *pcb)
 #endif /* CHECKSUM_GEN_TCP */
 #endif /* TCP_CHECKSUM_ON_COPY */
 #if TCP_GSO
-  if (seg->len > pcb->mss) {
+  /* enable/disable GSO flag for the sending network interface driver */
+  if (seg->len > seg->p->gso_size) {
     seg->p->flags |= PBUF_FLAG_GSO;
-    seg->p->gso_size = pcb->mss;
+  } else {
+    seg->p->flags &= ~((typeof(seg->p->flags)) PBUF_FLAG_GSO);
   }
 #endif
   TCP_STATS_INC(tcp.xmit);
