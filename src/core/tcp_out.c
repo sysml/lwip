@@ -1017,7 +1017,18 @@ tcp_seg_ack_partial(struct tcp_pcb *pcb, struct tcp_seg *seg, u16_t pos, u16_t *
 
   /* Phase 3: Update segment descriptor */
   seg->len -= pos;
-  seg->tcphdr->seqno = htonl(ntohl(seg->tcphdr->seqno) + pos);
+
+  /* Phase 4: Update TCP header fields */
+  seg->tcphdr->seqno  = htonl(ntohl(seg->tcphdr->seqno) + pos);
+  if (TCPH_FLAGS(seg->tcphdr) & TCP_URG) {
+    u16_t urgp = ntohs(seg->tcphdr->urgp);
+    if (urgp <= pos) {
+      TCPH_UNSET_FLAG(seg->tcphdr, TCP_URG);
+      seg->tcphdr->urgp = 0;
+    } else {
+      seg->tcphdr->urgp = htons(urgp - pos);
+    }
+  }
 
   if (pbuf_releases)
     *pbuf_releases += releases;
@@ -1100,7 +1111,24 @@ tcp_seg_split(struct tcp_pcb *pcb, struct tcp_seg *seg, u16_t pos, u16_t *allocs
   seg->oversize_left  = 0;
 #endif /* TCP_OVERSIZE_DBGCHECK */
 
+  /* Phase 6: update TCP header in segments */
+  TCPH_UNSET_FLAG(seg->tcphdr, TCP_FIN);
+  TCPH_UNSET_FLAG(seg->tcphdr, TCP_PSH);
+  TCPH_UNSET_FLAG(seg->tcphdr, TCP_CWR);
+  if (TCPH_FLAGS(seg->tcphdr) & TCP_URG) {
+    u16_t urgp = ntohs(seg->tcphdr->urgp);
+    if (urgp <= seg->len) {
+      TCPH_UNSET_FLAG(seg2->tcphdr, TCP_URG);
+      seg2->tcphdr->urgp = 0;
+    } else {
+      seg2->tcphdr->urgp = htons(urgp - seg->len);
+      seg->tcphdr->urgp = htons(seg->len);
+    }
+  }
   seg2->tcphdr->seqno = htonl(ntohl(seg->tcphdr->seqno) + seg->len);
+
+  /* Note: chksum, ackno and further encapsulating headers (e.g., IP),
+   * will be (over)written by tcp_output_segment()  */
 
   if (allocs)
     *(allocs) = a;
