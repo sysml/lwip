@@ -1131,6 +1131,10 @@ tcp_output(struct tcp_pcb *pcb)
 #if TCP_CWND_DEBUG
   s16_t i = 0;
 #endif /* TCP_CWND_DEBUG */
+#if TCP_GSO
+  u16_t queue_inc, seglen;
+  u32_t snd_wnd_left;
+#endif /* TCP_GSO */
 
   /* pcb->state LISTEN not allowed here */
   LWIP_ASSERT("don't call tcp_output for listen-pcbs",
@@ -1190,7 +1194,7 @@ tcp_output(struct tcp_pcb *pcb)
   /* data available and window allows it to be sent? */
 #if TCP_GSO
   while (seg != NULL &&
-         ntohl(seg->tcphdr->seqno) - pcb->lastack + LWIP_MIN(seg->len, pcb->mss) <= wnd) {
+         ntohl(seg->tcphdr->seqno) - pcb->lastack + ((seg->len > pcb->mss) ? pcb->mss : seg->len) <= wnd) {
 #else /* TCP_GSO */
   while (seg != NULL &&
          ntohl(seg->tcphdr->seqno) - pcb->lastack + seg->len <= wnd) {
@@ -1225,15 +1229,24 @@ tcp_output(struct tcp_pcb *pcb)
     seg->oversize_left = 0;
 #endif /* TCP_OVERSIZE_DBGCHECK */
 #if TCP_GSO
-    if (seg->len > wnd) {
-      /* current segment too big, shrink it
-       * This can happen when TSO is enabled and a bigger segment
-       * was created than can be sent currently */
-      u16_t queue_inc = 0;
-      err = tcp_seg_split(pcb, seg, wnd, &queue_inc);
-      if (err != ERR_OK)
+    snd_wnd_left = pcb->snd_wnd - (ntohl(seg->tcphdr->seqno) - pcb->lastack);
+    if ((seg->len > snd_wnd_left)) {
+      /* current segment is too big, shrink it so that it at least fits
+       * in the current send window. We ignore the congestion window in order
+       * to avoid too many software segmentations */
+      LWIP_ASSERT("GSO segment expected here", seg->len > pcb->mss);
+#if LWIP_WND_SCALE
+      snd_wnd_left = LWIP_MIN(snd_wnd_left, 0xffffu);
+#endif
+      seglen = (u16_t)((snd_wnd_left / pcb->mss) * pcb->mss); /* round to multiple of MSS */
+      LWIP_ASSERT("Left space on window is smaller than MSS!?", (seglen != 0));
+      err = tcp_seg_split(pcb, seg, seglen, &queue_inc);
+      if (err != ERR_OK) {
+        pcb->flags |= TF_NAGLEMEMERR;
         return err;
+      }
       pcb->snd_queuelen += queue_inc; /* register the newly created pbufs */
+      LWIP_ASSERT("segment splitting looks correct", queue_inc == 0 || seg->next != NULL);
     }
 #endif /* TCP_GSO */
     err = tcp_output_segment(seg, pcb);
