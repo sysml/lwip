@@ -1165,12 +1165,18 @@ pbuf_drop_at(struct pbuf* in, u16_t in_offset, u16_t in_len, u16_t *out_releases
   struct pbuf* p;
   struct pbuf* q;
   u16_t releases = 0;
+  /* copy of attributes */
+  u8_t in_flags;
+  u16_t in_gso_size;
 
   LWIP_ERROR("(in != NULL) && (in_offset + in_len < in->tot_len) (programmer violates API)",
              ((in != NULL) && (in_offset + in_len < in->tot_len)), return NULL;);
 
   for (q = in; q != NULL; q = q->next)
     LWIP_ASSERT("pbuf chains with multiple references are not implemented yet", (q->ref <= 1));
+
+  in_flags = in->flags;
+  in_gso_size = in->gso_size;
 
   s = pbuf_skip2(in, in_offset, &s_offset, &q);
   if (s_offset == 0 && q != NULL) {
@@ -1246,6 +1252,10 @@ pbuf_drop_at(struct pbuf* in, u16_t in_offset, u16_t in_len, u16_t *out_releases
   }
   for (q = in; q != s; q = q->next)
     q->tot_len -= in_len;
+
+  /* set attributes */
+  in->flags = in_flags;
+  in->gso_size = in_gso_size;
 
   if (out_releases)
     *out_releases = releases;
@@ -1384,6 +1394,12 @@ pbuf_split_at(struct pbuf* in, u16_t in_pos, pbuf_layer in_rest_layer, struct pb
     } else {
       *out_rest = q2;
     }
+  }
+
+  /* copy attributes */
+  if (*out_rest) {
+    (*out_rest)->flags    = in->flags;
+    (*out_rest)->gso_size = in->gso_size;
   }
 
   if (out_allocations)
