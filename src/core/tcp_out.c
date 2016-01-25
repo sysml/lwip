@@ -1552,9 +1552,16 @@ tcp_rst(u32_t seqno, u32_t ackno,
   snmp_inc_tcpoutrsts();
 
 #if CHECKSUM_GEN_TCP
+#if TCP_CHECKSUM_PARTIAL
+  u16_t cspartial_init;
+
+  cspartial_init = ip_chksum_partial_init(IP_PROTO_TCP, local_ip, remote_ip);
+  tcphdr->chksum = ip_chksum_partial_calc(cspartial_init, p->tot_len);
+#else
   tcphdr->chksum = ip_chksum_pseudo(p, IP_PROTO_TCP, p->tot_len,
                                      local_ip, remote_ip);
-#endif
+#endif /* TCP_CHECKSUM_PARTIAL */
+#endif /* CHECKSUM_GEN_TCP */
   /* Send output with hardcoded TTL/HL since we have no access to the pcb */
   ip_output(IP_IS_V6(remote_ip), p, local_ip, remote_ip, TCP_TTL, 0, IP_PROTO_TCP);
   pbuf_free(p);
