@@ -501,7 +501,11 @@ tcp_write(struct tcp_pcb *pcb, const void *arg, u16_t len, u8_t apiflags)
      * (len==0). The new pbuf is kept in concat_p and pbuf_cat'ed at
      * the end.
      */
+#if TCP_SEG_LIMIT_PBUF_CLEN
+    if ((pos < len) && (space > 0) && (last_unsent->len > 0) && (pbuf_clen(last_unsent->p) < TCP_SEG_MAX_PBUF_CLEN)) {
+#else
     if ((pos < len) && (space > 0) && (last_unsent->len > 0)) {
+#endif /* TCP_SEG_LIMIT_PBUF_CLEN */
       u16_t seglen = space < len - pos ? space : len - pos;
       seg = last_unsent;
 
@@ -539,6 +543,12 @@ tcp_write(struct tcp_pcb *pcb, const void *arg, u16_t len, u8_t apiflags)
         /* reference the non-volatile payload data */
         ((struct pbuf_rom*)concat_p)->payload = (const u8_t*)arg + pos;
       }
+#if TCP_SEG_LIMIT_PBUF_CLEN
+      if (pbuf_clen(concat_p) + pbuf_clen(last_unsent->p) > TCP_SEG_MAX_PBUF_CLEN) {
+        LWIP_DEBUGF(TCP_OUTPUT_DEBUG | 2, ("tcp_write: pbuf chain too long %"TCPWNDSIZE_F" (%"TCPWNDSIZE_F")\n", pbuf_clen(concat_p) + pbuf_clen(pcb->unsent), TCP_SEG_MAX_PBUF_CLEN));
+        goto memerr;
+      }
+#endif /* TCP_SEG_LIMIT_PBUF_CLEN */
 
       pos += seglen;
       queuelen += pbuf_clen(concat_p);
@@ -631,6 +641,13 @@ tcp_write(struct tcp_pcb *pcb, const void *arg, u16_t len, u8_t apiflags)
       pbuf_free(p);
       goto memerr;
     }
+#if TCP_SEG_LIMIT_PBUF_CLEN
+    if (pbuf_clen(p) > TCP_SEG_MAX_PBUF_CLEN) {
+      LWIP_DEBUGF(TCP_OUTPUT_DEBUG | 2, ("tcp_write: pbuf chain too long %"TCPWNDSIZE_F" (%"TCPWNDSIZE_F")\n", pbuf_clen(p), TCP_SEG_MAX_PBUF_CLEN));
+      pbuf_free(p);
+      goto memerr;
+    }
+#endif /* TCP_SEG_LIMIT_PBUF_CLEN */
 
     if ((seg = tcp_create_segment(pcb, p, 0, pcb->snd_lbb + pos, optflags)) == NULL) {
       goto memerr;

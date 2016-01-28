@@ -1136,25 +1136,17 @@
 #define TCP_GSO 0
 #endif
 
-#ifndef TCP_GSO_MAX_SEG
 #if TCP_GSO
-#define TCP_GSO_MAX_SEG 15
-#endif
-#endif
-
 #ifndef TCP_GSO_HLEN
-#if TCP_GSO
 #define TCP_GSO_HLEN \
 				(PBUF_LINK_ENCAPSULATION_HLEN + PBUF_LINK_HLEN + \
 				 PBUF_IP_HLEN + PBUF_TRANSPORT_HLEN + ETH_PAD_SIZE)
 #endif
-#endif
 
 #ifndef TCP_GSO_SEG_LEN
-#if TCP_GSO
-#define TCP_GSO_SEG_LEN (TCP_GSO_MAX_SEG*PAGE_SIZE)
+#define TCP_GSO_SEG_LEN ((65535 / TCP_MSS) * TCP_MSS)
 #endif
-#endif
+#endif /* TCP_GSO */
 
 /**
  * TCP_CALCULATE_EFF_SEND_MSS: "The maximum size of a segment that TCP really
@@ -1183,6 +1175,22 @@
  */
 #ifndef TCP_SND_QUEUELEN
 #define TCP_SND_QUEUELEN                ((4 * (TCP_SND_BUF) + (TCP_MSS - 1))/(TCP_MSS))
+#endif
+
+/**
+ * Limit chain length of created PBUFs
+ * This might be useful if TCP_GSO is enabled and your NIC is
+ * limited in the number of scattered buffers it can handle for
+ * each transmission
+ */
+#ifndef TCP_SEG_LIMIT_PBUF_CLEN
+#define TCP_SEG_LIMIT_PBUF_CLEN 0
+#endif
+
+#if TCP_SEG_LIMIT_PBUF_CLEN
+#ifndef TCP_SEG_MAX_PBUF_CLEN
+#define TCP_SEG_MAX_PBUF_CLEN 20
+#endif
 #endif
 
 /**
