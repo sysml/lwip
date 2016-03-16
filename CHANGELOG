@@ -258,6 +258,30 @@ HISTORY
 
   ++ Bugfixes:
 
+  2013-03-16: Joel Cunningham
+  * tcp_out.c: reset rto timer on fast retransmission
+
+  2016-03-16: Deomid Ryabkov
+  * tcp_out.c: fixed bug #46384 Segment size calculation bug with MSS != TCP_MSS
+
+  2016-03-05: Simon Goldschmidt
+  * err.h/.c, sockets.c: ERR_IF is not necessarily a fatal error
+
+  2015-11-19: fix by Kerem Hadimli
+  * sockets.c: fixed bug #46471: lwip_accept() leaks socket descriptors if new
+    netconn was already closed because of peer behavior
+
+  2015-11-12: fix by Valery Ushakov
+  * tcp_in.c: fixed bug #46365 tcp_accept_null() should call tcp_abort()
+
+  2015-10-02: Dirk Ziegelmeier/Simon Goldschmidt
+  * snmp: cleaned up snmp structs API (fixed race conditions from bug #46089,
+    reduce ram/rom usage of tables): incompatible change for private MIBs
+
+  2015-09-30: Simon Goldschmidt
+  * ip4_addr.c: fixed bug #46072: ip4addr_aton() does not check the number range
+    of all address parts
+
   2015-08-28: Simon Goldschmidt
   * tcp.c, tcp_in.c: fixed bug #44023: TCP ssthresh value is unclear: ssthresh
     is set to the full send window for active open, too, and is updated once
